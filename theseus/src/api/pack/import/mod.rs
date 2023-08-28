@@ -12,7 +12,6 @@ use crate::{
         LoadingBarId,
     },
     prelude::ProfilePathId,
-    state::Profiles,
     util::{
         fetch::{self, IoSemaphore},
         io,
@@ -162,9 +161,6 @@ pub async fn import_instance(
             return Err(e);
         }
     }
-
-    // Check existing managed packs for potential updates
-    tokio::task::spawn(Profiles::update_modrinth_versions());
 
     tracing::debug!("Completed import.");
     Ok(())

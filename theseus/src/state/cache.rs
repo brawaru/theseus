@@ -7,6 +7,7 @@ use crate::util::fetch::{
 };
 use crate::util::io::IOError;
 
+use crate::prelude::ProfilePathId;
 use async_zip::tokio::read::fs::ZipFileReader;
 use chrono::{DateTime, Utc};
 use futures::StreamExt;
@@ -33,7 +34,7 @@ impl ProjectType {
     pub fn get_from_loaders(loaders: Vec<String>) -> Option<Self> {
         if loaders
             .iter()
-            .any(|x| ["fabric", "forge", "quilt"].contains(&&**x))
+            .any(|x| ["fabric", "forge", "quilt", "neoforge"].contains(&&**x))
         {
             Some(ProjectType::Mod)
         } else if loaders.iter().any(|x| x == "datapack") {
@@ -194,14 +195,23 @@ pub enum FileType {
     Unknown,
 }
 
+#[derive(Deserialize, Serialize)]
+pub struct CacheData {
+    pub projects: HashMap<String, ModrinthProject>,
+    pub versions: HashMap<String, ModrinthVersion>,
+    pub team_members: HashMap<String, ModrinthTeamMember>,
+}
+
+impl CacheData {}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ProjectMetadata {
     Modrinth {
-        project: Box<ModrinthProject>,
-        version: Box<ModrinthVersion>,
-        members: Vec<ModrinthTeamMember>,
-        update_version: Option<Box<ModrinthVersion>>,
+        project_id: String,
+        version_id: String,
+        team_id: String,
+        update_version_id: Option<String>,
         incompatible: bool,
     },
     Inferred {
@@ -215,105 +225,69 @@ pub enum ProjectMetadata {
     Unknown,
 }
 
-#[tracing::instrument(skip(io_semaphore))]
-#[theseus_macros::debug_pin]
-async fn read_icon_from_file(
-    icon_path: Option<String>,
-    cache_dir: &Path,
-    path: &PathBuf,
-    io_semaphore: &IoSemaphore,
-) -> crate::Result<Option<PathBuf>> {
-    if let Some(icon_path) = icon_path {
-        // we have to repoen the zip twice here :(
-        let zip_file_reader = ZipFileReader::new(path).await;
-        if let Ok(zip_file_reader) = zip_file_reader {
-            // Get index of icon file and open it
-            let zip_index_option = zip_file_reader
-                .file()
-                .entries()
-                .iter()
-                .position(|f| f.entry().filename() == icon_path);
-            if let Some(index) = zip_index_option {
-                let entry = zip_file_reader
-                    .file()
-                    .entries()
-                    .get(index)
-                    .unwrap()
-                    .entry();
-                let mut bytes = Vec::new();
-                if zip_file_reader
-                    .entry(zip_index_option.unwrap())
-                    .await?
-                    .read_to_end_checked(&mut bytes, entry)
-                    .await
-                    .is_ok()
-                {
-                    let bytes = bytes::Bytes::from(bytes);
-                    let path = write_cached_icon(
-                        &icon_path,
-                        cache_dir,
-                        bytes,
-                        io_semaphore,
-                    )
-                    .await?;
-
-                    return Ok(Some(path));
-                }
-            };
-        }
-    }
-
-    Ok(None)
-}
-
-// Creates Project data from the existing files in the file system, for a given Profile
-// Paths must be the full paths to the files in the FS, and not the relative paths
-// eg: with get_profile_full_project_paths
-#[tracing::instrument(skip(paths, profile, io_semaphore, fetch_semaphore))]
+/// Caches data from all profiles which have instances on Modrinth
+#[tracing::instrument(skip(profiles, io_semaphore, fetch_semaphore))]
 #[theseus_macros::debug_pin]
 pub async fn infer_data_from_files(
-    profile: Profile,
-    paths: Vec<PathBuf>,
+    profiles: Vec<(Profile, Vec<PathBuf>)>,
     cache_dir: PathBuf,
     io_semaphore: &IoSemaphore,
     fetch_semaphore: &FetchSemaphore,
     credentials: &CredentialsStore,
-) -> crate::Result<HashMap<ProjectPathId, Project>> {
+) -> crate::Result<HashMap<ProfilePathId, HashMap<ProjectPathId, Project>>> {
     let mut file_path_hashes = HashMap::new();
 
-    for path in paths {
-        if !path.exists() {
-            continue;
-        }
-        if let Some(ext) = path.extension() {
-            // Ignore txt configuration files
-            if ext == "txt" {
+    struct FileMeta {
+        pub path: PathBuf,
+        pub loader: String,
+        pub game_version: String,
+        pub profile: ProfilePathId,
+    }
+
+    for (profile, paths) in profiles {
+        for path in paths {
+            if !path.exists() {
                 continue;
             }
-        }
-
-        let mut file = tokio::fs::File::open(path.clone())
-            .await
-            .map_err(|e| IOError::with_path(e, &path))?;
-
-        let mut buffer = [0u8; 4096]; // Buffer to read chunks
-        let mut hasher = sha2::Sha512::new(); // Hasher
-
-        loop {
-            let bytes_read =
-                file.read(&mut buffer).await.map_err(IOError::from)?;
-            if bytes_read == 0 {
-                break;
+            if let Some(ext) = path.extension() {
+                // Ignore txt configuration files
+                if ext == "txt" {
+                    continue;
+                }
             }
-            hasher.update(&buffer[..bytes_read]);
-        }
 
-        let hash = format!("{:x}", hasher.finalize());
-        file_path_hashes.insert(hash, path.clone());
+            let mut file = tokio::fs::File::open(path.clone())
+                .await
+                .map_err(|e| IOError::with_path(e, &path))?;
+
+            let mut buffer = [0u8; 4096]; // Buffer to read chunks
+            let mut hasher = sha2::Sha512::new(); // Hasher
+
+            loop {
+                let bytes_read =
+                    file.read(&mut buffer).await.map_err(IOError::from)?;
+                if bytes_read == 0 {
+                    break;
+                }
+                hasher.update(&buffer[..bytes_read]);
+            }
+
+            let hash = format!("{:x}", hasher.finalize());
+            file_path_hashes.insert(
+                hash,
+                FileMeta {
+                    path,
+                    loader: profile.metadata.loader.as_api_str().to_string(),
+                    game_version: profile.metadata.game_version.clone(),
+                    profile: profile.profile_id(),
+                },
+            );
+        }
     }
 
     let files_url = format!("{}version_files", MODRINTH_API_URL);
-    let updates_url = format!("{}version_files/update", MODRINTH_API_URL);
+    let updates_url =
+        format!("{}version_files/update_individual", MODRINTH_API_URL);
     let (files, update_versions) = tokio::try_join!(
         fetch_json::<HashMap<String, ModrinthVersion>>(
             Method::POST,
@@ -331,10 +305,12 @@ pub async fn infer_data_from_files(
             &updates_url,
             None,
             Some(json!({
-                "hashes": file_path_hashes.keys().collect::<Vec<_>>(),
+                "hashes": file_path_hashes.iter().map(|(hash, x)| json!({
+                    "hash": hash,
+                    "loaders": [x.loader],
+                    "game_versions": [x.game_version],
+                })).collect::<Vec<_>>(),
                 "algorithm": "sha512",
-                "loaders": [profile.metadata.loader],
-                "game_versions": [profile.metadata.game_version]
             })),
             fetch_semaphore,
             credentials,
@@ -381,52 +357,48 @@ pub async fn infer_data_from_files(
     .flatten()
     .collect();
 
-    let mut return_projects: Vec<(PathBuf, Project)> = Vec::new();
-    let mut further_analyze_projects: Vec<(String, PathBuf)> = Vec::new();
+    let mut return_projects: Vec<(PathBuf, ProfilePathId, Project)> =
+        Vec::new();
+    let mut further_analyze_projects: Vec<(String, FileMeta)> = Vec::new();
 
-    for (hash, path) in file_path_hashes {
+    for (hash, meta) in file_path_hashes {
         if let Some(version) = files.get(&hash) {
             if let Some(project) =
                 projects.iter().find(|x| version.project_id == x.id)
             {
-                let file_name = path
+                let file_name = meta
+                    .path
                     .file_name()
                     .unwrap_or_default()
                     .to_string_lossy()
                     .to_string();
 
                 return_projects.push((
-                    path,
+                    meta.path,
+                    meta.profile,
                     Project {
                         disabled: file_name.ends_with(".disabled"),
                         metadata: ProjectMetadata::Modrinth {
-                            project: Box::new(project.clone()),
-                            version: Box::new(version.clone()),
-                            members: teams
-                                .iter()
-                                .filter(|x| x.team_id == project.team)
-                                .cloned()
-                                .collect::<Vec<_>>(),
-                            update_version: if let Some(value) =
+                            project_id: project.id.clone(),
+                            version_id: version.id.clone(),
+                            team_id: project.team.clone(),
+                            update_version_id: if let Some(value) =
                                 update_versions.get(&hash)
                             {
                                 if value.id != version.id {
-                                    Some(Box::new(value.clone()))
+                                    Some(value.id.clone())
                                 } else {
                                     None
                                 }
                             } else {
                                 None
                             },
-                            incompatible: !version.loaders.contains(
-                                &profile
-                                    .metadata
-                                    .loader
-                                    .as_api_str()
-                                    .to_string(),
-                            ) || version
-                                .game_versions
-                                .contains(&profile.metadata.game_version),
+                            incompatible: !version
+                                .loaders
+                                .contains(&meta.loader)
+                                || version
+                                    .game_versions
+                                    .contains(&meta.game_version),
                         },
                         sha512: hash,
                         file_name,
@@ -436,23 +408,25 @@ pub async fn infer_data_from_files(
             }
         }
 
-        further_analyze_projects.push((hash, path));
+        further_analyze_projects.push((hash, meta));
     }
 
-    for (hash, path) in further_analyze_projects {
-        let file_name = path
+    for (hash, meta) in further_analyze_projects {
+        let file_name = meta
+            .path
             .file_name()
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
 
         let zip_file_reader = if let Ok(zip_file_reader) =
-            ZipFileReader::new(path.clone()).await
+            ZipFileReader::new(meta.path.clone()).await
         {
             zip_file_reader
         } else {
             return_projects.push((
-                path.clone(),
+                meta.path.clone(),
+                meta.profile,
                 Project {
                     sha512: hash,
                     disabled: file_name.ends_with(".disabled"),
@@ -500,13 +474,14 @@ pub async fn infer_data_from_files(
                         let icon = read_icon_from_file(
                             pack.logo_file.clone(),
                             &cache_dir,
-                            &path,
+                            &meta.path,
                             io_semaphore,
                         )
                         .await?;
 
                         return_projects.push((
-                            path.clone(),
+                            meta.path.clone(),
+                            meta.profile,
                             Project {
                                 sha512: hash,
                                 disabled: file_name.ends_with(".disabled"),
@@ -568,13 +543,14 @@ pub async fn infer_data_from_files(
                     let icon = read_icon_from_file(
                         pack.logo_file,
                         &cache_dir,
-                        &path,
+                        &meta.path,
                         io_semaphore,
                     )
                     .await?;
 
                     return_projects.push((
-                        path.clone(),
+                        meta.path.clone(),
+                        meta.profile,
                         Project {
                             sha512: hash,
                             disabled: file_name.ends_with(".disabled"),
@@ -635,13 +611,14 @@ pub async fn infer_data_from_files(
                     let icon = read_icon_from_file(
                         pack.icon,
                         &cache_dir,
-                        &path,
+                        &meta.path,
                         io_semaphore,
                     )
                     .await?;
 
                     return_projects.push((
-                        path.clone(),
+                        meta.path.clone(),
+                        meta.profile,
                         Project {
                             sha512: hash,
                             disabled: file_name.ends_with(".disabled"),
@@ -702,13 +679,14 @@ pub async fn infer_data_from_files(
                     let icon = read_icon_from_file(
                         pack.metadata.as_ref().and_then(|x| x.icon.clone()),
                         &cache_dir,
-                        &path,
+                        &meta.path,
                         io_semaphore,
                     )
                     .await?;
 
                     return_projects.push((
-                        path.clone(),
+                        meta.path.clone(),
+                        meta.profile,
                         Project {
                             sha512: hash,
                             disabled: file_name.ends_with(".disabled"),
@@ -770,16 +748,17 @@ pub async fn infer_data_from_files(
                     let icon = read_icon_from_file(
                         Some("pack.png".to_string()),
                         &cache_dir,
-                        &path,
+                        &meta.path,
                         io_semaphore,
                     )
                     .await?;
 
                     // Guess the project type from the filepath
                     let project_type =
-                        ProjectType::get_from_parent_folder(path.clone());
+                        ProjectType::get_from_parent_folder(meta.path.clone());
                     return_projects.push((
-                        path.clone(),
+                        meta.path.clone(),
+                        meta.profile,
                         Project {
                             sha512: hash,
                             disabled: file_name.ends_with(".disabled"),
@@ -801,7 +780,8 @@ pub async fn infer_data_from_files(
         }
 
         return_projects.push((
-            path.clone(),
+            meta.path.clone(),
+            meta.profile,
             Project {
                 sha512: hash,
                 disabled: file_name.ends_with(".disabled"),
@@ -812,12 +792,74 @@ pub async fn infer_data_from_files(
     }
 
     // Project paths should be relative
-    let mut corrected_hashmap = HashMap::new();
+    let mut corrected_hashmap: HashMap<
+        ProfilePathId,
+        HashMap<ProjectPathId, Project>,
+    > = HashMap::new();
     let mut stream = tokio_stream::iter(return_projects);
-    while let Some((h, v)) = stream.next().await {
-        let h = ProjectPathId::from_fs_path(h).await?;
-        corrected_hashmap.insert(h, v);
+    while let Some((h, p, v)) = stream.next().await {
+        if let Some(val) = corrected_hashmap.get_mut(&p) {
+            let h = ProjectPathId::from_fs_path(h).await?;
+            val.insert(h, v);
+        } else {
+            let mut val = HashMap::new();
+            let h = ProjectPathId::from_fs_path(h).await?;
+            val.insert(h, v);
+
+            corrected_hashmap.insert(p, val);
+        }
     }
 
     Ok(corrected_hashmap)
+}
+
+#[tracing::instrument(skip(io_semaphore))]
+#[theseus_macros::debug_pin]
+async fn read_icon_from_file(
+    icon_path: Option<String>,
+    cache_dir: &Path,
+    path: &PathBuf,
+    io_semaphore: &IoSemaphore,
+) -> crate::Result<Option<PathBuf>> {
+    if let Some(icon_path) = icon_path {
+        // we have to repoen the zip twice here :(
+        let zip_file_reader = ZipFileReader::new(path).await;
+        if let Ok(zip_file_reader) = zip_file_reader {
+            // Get index of icon file and open it
+            let zip_index_option = zip_file_reader
+                .file()
+                .entries()
+                .iter()
+                .position(|f| f.entry().filename() == icon_path);
+            if let Some(index) = zip_index_option {
+                let entry = zip_file_reader
+                    .file()
+                    .entries()
+                    .get(index)
+                    .unwrap()
+                    .entry();
+                let mut bytes = Vec::new();
+                if zip_file_reader
+                    .entry(zip_index_option.unwrap())
+                    .await?
+                    .read_to_end_checked(&mut bytes, entry)
+                    .await
+                    .is_ok()
+                {
+                    let bytes = bytes::Bytes::from(bytes);
+                    let path = write_cached_icon(
+                        &icon_path,
+                        cache_dir,
+                        bytes,
+                        io_semaphore,
+                    )
+                    .await?;
+
+                    return Ok(Some(path));
+                }
+            };
+        }
+    }
+
+    Ok(None)
 }

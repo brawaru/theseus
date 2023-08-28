@@ -69,7 +69,7 @@ pub async fn get(
 
     if clear_projects.unwrap_or(false) {
         if let Some(profile) = &mut profile {
-            profile.projects = HashMap::new();
+            profile.cached_projects = HashMap::new();
         }
     }
 
@@ -89,7 +89,7 @@ pub async fn get_by_uuid(
 
     if clear_projects.unwrap_or(false) {
         if let Some(profile) = &mut profile {
-            profile.projects = HashMap::new();
+            profile.cached_projects = HashMap::new();
         }
     }
 
@@ -250,7 +250,7 @@ pub async fn list(
         .into_iter()
         .map(|mut x| {
             if clear_projects.unwrap_or(false) {
-                x.1.projects = HashMap::new();
+                x.1.cached_projects = HashMap::new();
             }
 
             x
@@ -288,13 +288,13 @@ pub async fn update_all_projects(
         .await?;
 
         let keys = profile
-            .projects
+            .cached_projects
             .into_iter()
             .filter(|(_, project)| {
                 matches!(
                     &project.metadata,
                     ProjectMetadata::Modrinth {
-                        update_version: Some(_),
+                        update_version_id: Some(_),
                         ..
                     }
                 )
@@ -358,15 +358,14 @@ pub async fn update_project(
     skip_send_event: Option<bool>,
 ) -> crate::Result<ProjectPathId> {
     if let Some(profile) = get(profile_path, None).await? {
-        if let Some(project) = profile.projects.get(project_path) {
+        if let Some(project) = profile.cached_projects.get(project_path) {
             if let ProjectMetadata::Modrinth {
-                update_version: Some(update_version),
+                update_version_id: Some(update_version),
                 ..
             } = &project.metadata
             {
-                let (path, new_version) = profile
-                    .add_project_version(update_version.id.clone())
-                    .await?;
+                let (path, new_version) =
+                    profile.add_project_version(update_version.clone()).await?;
 
                 if path != project_path.clone() {
                     profile.remove_project(project_path, Some(true)).await?;
@@ -375,18 +374,18 @@ pub async fn update_project(
                 let state = State::get().await?;
                 let mut profiles = state.profiles.write().await;
                 if let Some(profile) = profiles.0.get_mut(profile_path) {
-                    let value = profile.projects.remove(project_path);
+                    let value = profile.cached_projects.remove(project_path);
                     if let Some(mut project) = value {
                         if let ProjectMetadata::Modrinth {
-                            ref mut version,
-                            ref mut update_version,
+                            ref mut version_id,
+                            ref mut update_version_id,
                             ..
                         } = project.metadata
                         {
-                            *version = Box::new(new_version);
-                            *update_version = None;
+                            *version_id = new_version.id;
+                            *update_version_id = None;
                         }
-                        profile.projects.insert(path.clone(), project);
+                        profile.cached_projects.insert(path.clone(), project);
                     }
                 }
                 drop(profiles);
@@ -889,10 +888,11 @@ pub async fn try_update_playtime(path: &ProfilePathId) -> crate::Result<()> {
         });
         // Copy this struct for every Modrinth project in the profile
         let mut hashmap: HashMap<String, serde_json::Value> = HashMap::new();
-        for (_, project) in profile.projects {
-            if let ProjectMetadata::Modrinth { version, .. } = project.metadata
+        for (_, project) in profile.cached_projects {
+            if let ProjectMetadata::Modrinth { version_id, .. } =
+                project.metadata
             {
-                hashmap.insert(version.id, playtime_update_json.clone());
+                hashmap.insert(version_id, playtime_update_json.clone());
             }
         }
 
@@ -978,56 +978,58 @@ pub async fn create_mrpack_json(
         .collect::<HashMap<_, _>>();
 
     let files: Result<Vec<PackFile>, crate::ErrorKind> = profile
-        .projects
+        .cached_projects
         .iter()
         .filter_map(|(mod_path, project)| {
             let path: String = mod_path.0.clone().to_string_lossy().to_string();
 
-            // Only Modrinth projects have a modrinth metadata field for the modrinth.json
-            Some(Ok(match project.metadata {
-                crate::prelude::ProjectMetadata::Modrinth {
-                    ref project,
-                    ref version,
-                    ..
-                } => {
-                    let mut env = HashMap::new();
-                    env.insert(EnvType::Client, project.client_side.clone());
-                    env.insert(EnvType::Server, project.server_side.clone());
+            return None;
 
-                    let primary_file = if let Some(primary_file) =
-                        version.files.first()
-                    {
-                        primary_file
-                    } else {
-                        return Some(Err(crate::ErrorKind::OtherError(
-                            format!("No primary file found for mod at: {path}"),
-                        )));
-                    };
-
-                    let file_size = primary_file.size;
-                    let downloads = vec![primary_file.url.clone()];
-                    let hashes = primary_file
-                        .hashes
-                        .clone()
-                        .into_iter()
-                        .map(|(h1, h2)| (PackFileHash::from(h1), h2))
-                        .collect();
-
-                    PackFile {
-                        path,
-                        hashes,
-                        env: Some(env),
-                        downloads,
-                        file_size,
-                    }
-                }
-                // Inferred files are skipped for the modrinth.json
-                crate::prelude::ProjectMetadata::Inferred { .. } => {
-                    return None
-                }
-                // Unknown projects are skipped for the modrinth.json
-                crate::prelude::ProjectMetadata::Unknown => return None,
-            }))
+            // // Only Modrinth projects have a modrinth metadata field for the modrinth.json
+            // Some(Ok(match project.metadata {
+            //     ProjectMetadata::Modrinth {
+            //         ref project_id,
+            //         ref version_id,
+            //         ..
+            //     } => {
+            //         let mut env = HashMap::new();
+            //         env.insert(EnvType::Client, project.client_side.clone());
+            //         env.insert(EnvType::Server, project.server_side.clone());
+            //
+            //         let primary_file = if let Some(primary_file) =
+            //             version.files.first()
+            //         {
+            //             primary_file
+            //         } else {
+            //             return Some(Err(crate::ErrorKind::OtherError(
+            //                 format!("No primary file found for mod at: {path}"),
+            //             )));
+            //         };
+            //
+            //         let file_size = primary_file.size;
+            //         let downloads = vec![primary_file.url.clone()];
+            //         let hashes = primary_file
+            //             .hashes
+            //             .clone()
+            //             .into_iter()
+            //             .map(|(h1, h2)| (PackFileHash::from(h1), h2))
+            //             .collect();
+            //
+            //         PackFile {
+            //             path,
+            //             hashes,
+            //             env: Some(env),
+            //             downloads,
+            //             file_size,
+            //         }
+            //     }
+            //     // Inferred files are skipped for the modrinth.json
+            //     crate::prelude::ProjectMetadata::Inferred { .. } => {
+            //         return None
+            //     }
+            //     // Unknown projects are skipped for the modrinth.json
+            //     crate::prelude::ProjectMetadata::Unknown => return None,
+            // }))
         })
         .collect();
     let files = files?;

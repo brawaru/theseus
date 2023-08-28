@@ -11,62 +11,6 @@ use crate::{
 };
 use futures::try_join;
 
-/// Updates a managed modrinth pack to the cached latest version found in 'modrinth_update_version'
-#[tracing::instrument]
-#[theseus_macros::debug_pin]
-pub async fn update_managed_modrinth(
-    profile_path: &ProfilePathId,
-) -> crate::Result<()> {
-    let profile = get(profile_path, None).await?.ok_or_else(|| {
-        crate::ErrorKind::UnmanagedProfileError(profile_path.to_string())
-            .as_error()
-    })?;
-
-    let unmanaged_err = || {
-        crate::ErrorKind::InputError(
-            format!("Profile at {} is not a managed modrinth pack, or has been disconnected.", profile_path),
-        )
-    };
-
-    // Extract modrinth pack information, if appropriate
-    let linked_data = profile
-        .metadata
-        .linked_data
-        .as_ref()
-        .ok_or_else(unmanaged_err)?;
-    let project_id: &String =
-        linked_data.project_id.as_ref().ok_or_else(unmanaged_err)?;
-    let version_id =
-        linked_data.version_id.as_ref().ok_or_else(unmanaged_err)?;
-
-    // extract modrinth_update_version, returning Ok(()) if it is none
-    let modrinth_update_version = match profile.modrinth_update_version {
-        Some(ref x) if x != version_id => x,
-        _ => return Ok(()), // No update version, or no update needed, return Ok(())
-    };
-
-    // Replace the pack with the new version
-    replace_managed_modrinth(
-        profile_path,
-        &profile,
-        project_id,
-        version_id,
-        Some(modrinth_update_version),
-    )
-    .await?;
-
-    emit_profile(
-        profile.uuid,
-        profile_path,
-        &profile.metadata.name,
-        ProfilePayloadType::Edited,
-    )
-    .await?;
-
-    State::sync().await?;
-    Ok(())
-}
-
 /// Repair a managed modrinth pack by 'updating' it to the current version
 #[tracing::instrument]
 #[theseus_macros::debug_pin]
@@ -87,7 +31,7 @@ pub async fn repair_managed_modrinth(
     // For repairing specifically, first we remove all installed projects (to ensure we do remove ones that aren't in the pack)
     // We do a project removal followed by removing everything in the .mrpack, to ensure we only
     // remove relevant projects and not things like save files
-    let projects_map = profile.projects.clone();
+    let projects_map = profile.cached_projects.clone();
     let stream = futures::stream::iter(
         projects_map
             .into_iter()

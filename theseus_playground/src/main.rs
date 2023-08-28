@@ -6,6 +6,9 @@
 use theseus::jre::autodetect_java_globals;
 use theseus::prelude::*;
 
+use theseus::pack::install_from::CreatePackLocation;
+use theseus::pack::install_mrpack::install_zipped_mrpack;
+use theseus::profile::add_project_from_version;
 use theseus::profile::create::profile_create;
 use tokio::time::{sleep, Duration};
 
@@ -42,7 +45,7 @@ async fn main() -> theseus::Result<()> {
     // Autodetect java globals
     let jres = jre::get_all_jre().await?;
     let java_8 = jre::find_filtered_jres("1.8", jres.clone(), false).await?;
-    let java_17 = jre::find_filtered_jres("1.78", jres.clone(), false).await?;
+    let java_17 = jre::find_filtered_jres("1.17", jres.clone(), false).await?;
     let java_18plus =
         jre::find_filtered_jres("1.18", jres.clone(), true).await?;
     let java_globals =
@@ -55,12 +58,6 @@ async fn main() -> theseus::Result<()> {
     // Changed the settings, so need to reset the semaphore
     st.reset_fetch_semaphore().await;
 
-    //
-    // st.settings
-    //     .write()
-    //     .await
-    //     .java_globals
-    //     .insert(JAVA_8_KEY.to_string(), check_jre(path).await?.unwrap());
     // Clear profiles
     println!("Clearing profiles.");
     {
@@ -74,7 +71,7 @@ async fn main() -> theseus::Result<()> {
 
     let name = "Example".to_string();
     let game_version = "1.19.2".to_string();
-    let modloader = ModLoader::Vanilla;
+    let modloader = ModLoader::Fabric;
     let loader_version = "stable".to_string();
 
     let profile_path = profile_create(
@@ -89,6 +86,19 @@ async fn main() -> theseus::Result<()> {
         None,
     )
     .await?;
+
+    // fabric api (outdated)
+    add_project_from_version(&profile_path, "6iOab8Tp".to_string()).await?;
+    // mod menu
+    add_project_from_version(&profile_path, "gSoPJyVn".to_string()).await?;
+    // sodium
+    add_project_from_version(&profile_path, "rAfhHfow".to_string()).await?;
+    // iris
+    add_project_from_version(&profile_path, "HzhiSGif".to_string()).await?;
+    // indium
+    add_project_from_version(&profile_path, "yTfou6df".to_string()).await?;
+    // bsl shaders
+    add_project_from_version(&profile_path, "P1eZktJ3".to_string()).await?;
 
     State::sync().await?;
 

@@ -4,7 +4,7 @@ use crate::data::DirectoryInfo;
 use crate::event::emit::{emit_profile, emit_warning};
 use crate::event::ProfilePayloadType;
 use crate::prelude::JavaVersion;
-use crate::state::projects::Project;
+use crate::state::cache::Project;
 use crate::state::{ModrinthVersion, ProjectMetadata, ProjectType};
 use crate::util::fetch::{
     fetch, fetch_json, write, write_cached_icon, IoSemaphore,
@@ -153,9 +153,8 @@ pub struct Profile {
     pub fullscreen: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hooks: Option<Hooks>,
-    pub projects: HashMap<ProjectPathId, Project>,
     #[serde(default)]
-    pub modrinth_update_version: Option<String>,
+    pub cached_projects: HashMap<ProjectPathId, Project>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -275,13 +274,12 @@ impl Profile {
                 submitted_time_played: 0,
                 recent_time_played: 0,
             },
-            projects: HashMap::new(),
+            cached_projects: HashMap::new(),
             java: None,
             memory: None,
             resolution: None,
             fullscreen: None,
             hooks: None,
-            modrinth_update_version: None,
         })
     }
 
@@ -353,8 +351,7 @@ impl Profile {
                         let caches_dir = state.directories.caches_dir();
                         let creds = state.credentials.read().await;
                         let projects = crate::state::infer_data_from_files(
-                            profile.clone(),
-                            paths,
+                            vec![(profile.clone(), paths)],
                             caches_dir,
                             &state.io_semaphore,
                             &state.fetch_semaphore,
@@ -365,8 +362,12 @@ impl Profile {
 
                         let mut new_profiles = state.profiles.write().await;
                         if let Some(profile) = new_profiles.0.get_mut(&profile_path_id) {
-                            profile.projects = projects;
+                            if let Some(projects) = projects.get(&profile_path_id) {
+                                profile.cached_projects = projects.clone();
+                            }
                         }
+                        new_profiles.sync().await?;
+
                         emit_profile(
                             profile.uuid,
                             &profile_path_id,
@@ -444,9 +445,7 @@ impl Profile {
 
             io::create_dir_all(&path).await?;
 
-            watcher
-                .watcher()
-                .watch(&profile_path.join(path), RecursiveMode::Recursive)?;
+            watcher.watcher().watch(&path, RecursiveMode::Recursive)?;
 
             Ok(())
         }
@@ -547,6 +546,8 @@ impl Profile {
                 } else {
                     ProjectType::ResourcePack
                 }
+            } else if file_name.ends_with(".jar") {
+                ProjectType::Mod
             } else {
                 return Err(crate::ErrorKind::InputError(
                     "Unable to infer project type for input file".to_string(),
@@ -571,7 +572,7 @@ impl Profile {
             let mut profiles = state.profiles.write().await;
 
             if let Some(profile) = profiles.0.get_mut(&self.profile_id()) {
-                profile.projects.insert(
+                profile.cached_projects.insert(
                     project_path_id.clone(),
                     Project {
                         sha512: hash,
@@ -600,7 +601,7 @@ impl Profile {
                 state.profiles.write().await;
 
             if let Some(profile) = profiles.0.get_mut(&self.profile_id()) {
-                profile.projects.remove(relative_path)
+                profile.cached_projects.remove(relative_path)
             } else {
                 None
             }
@@ -643,7 +644,7 @@ impl Profile {
             let mut profiles = state.profiles.write().await;
             if let Some(profile) = profiles.0.get_mut(&self.profile_id()) {
                 profile
-                    .projects
+                    .cached_projects
                     .insert(new_project_path_id.clone(), project);
                 profile.metadata.date_modified = Utc::now();
             }
@@ -664,7 +665,7 @@ impl Profile {
         dont_remove_arr: Option<bool>,
     ) -> crate::Result<()> {
         let state = State::get().await?;
-        if self.projects.contains_key(relative_path) {
+        if self.cached_projects.contains_key(relative_path) {
             io::remove_file(
                 self.get_profile_full_path()
                     .await?
@@ -675,7 +676,7 @@ impl Profile {
                 let mut profiles = state.profiles.write().await;
 
                 if let Some(profile) = profiles.0.get_mut(&self.profile_id()) {
-                    profile.projects.remove(relative_path);
+                    profile.cached_projects.remove(relative_path);
                     profile.metadata.date_modified = Utc::now();
                 }
             }
@@ -751,33 +752,24 @@ impl Profiles {
                 }
             }
 
-            let caches_dir = state.directories.caches_dir();
-            future::try_join_all(files.into_iter().map(
-                |(profile, files)| async {
-                    let profile_name = profile.profile_id();
-                    let creds = state.credentials.read().await;
-                    let inferred = super::projects::infer_data_from_files(
-                        profile,
-                        files,
-                        caches_dir.clone(),
-                        &state.io_semaphore,
-                        &state.fetch_semaphore,
-                        &creds,
-                    )
-                    .await?;
-                    drop(creds);
-
-                    let mut new_profiles = state.profiles.write().await;
-                    if let Some(profile) = new_profiles.0.get_mut(&profile_name)
-                    {
-                        profile.projects = inferred;
-                    }
-                    drop(new_profiles);
-
-                    Ok::<(), crate::Error>(())
-                },
-            ))
+            let creds = state.credentials.read().await;
+            let inferred = super::cache::infer_data_from_files(
+                files,
+                state.directories.caches_dir(),
+                &state.io_semaphore,
+                &state.fetch_semaphore,
+                &creds,
+            )
             .await?;
+            drop(creds);
+
+            let mut new_profiles = state.profiles.write().await;
+            for (path, projects) in inferred {
+                if let Some(profile) = new_profiles.0.get_mut(&path) {
+                    profile.cached_projects = projects;
+                }
+            }
+            drop(new_profiles);
 
             {
                 let profiles = state.profiles.read().await;
@@ -792,94 +784,6 @@ impl Profiles {
             Ok(()) => {}
             Err(err) => {
                 tracing::warn!("Unable to fetch profile projects: {err}")
-            }
-        };
-    }
-
-    #[tracing::instrument]
-    #[theseus_macros::debug_pin]
-    pub async fn update_modrinth_versions() {
-        let res = async {
-            let state = State::get().await?;
-            // Temporarily store all profiles that have modrinth linked data
-            let mut modrinth_updatables: Vec<(ProfilePathId, String)> =
-                Vec::new();
-            {
-                let profiles = state.profiles.read().await;
-                for (profile_path, profile) in profiles.0.iter() {
-                    if let Some(linked_data) = &profile.metadata.linked_data {
-                        if let Some(linked_project) = &linked_data.project_id {
-                            modrinth_updatables.push((
-                                profile_path.clone(),
-                                linked_project.clone(),
-                            ));
-                        }
-                    }
-                }
-            }
-
-            // Fetch online from Modrinth each latest version
-            future::try_join_all(modrinth_updatables.into_iter().map(
-                |(profile_path, linked_project)| {
-                    let profile_path = profile_path;
-                    let linked_project = linked_project;
-                    let state = state.clone();
-                    async move {
-                        let creds = state.credentials.read().await;
-                        let versions: Vec<ModrinthVersion> = fetch_json(
-                            Method::GET,
-                            &format!(
-                                "{}project/{}/version",
-                                MODRINTH_API_URL,
-                                linked_project.clone()
-                            ),
-                            None,
-                            None,
-                            &state.fetch_semaphore,
-                            &creds,
-                        )
-                        .await?;
-                        drop(creds);
-
-                        // Versions are pre-sorted in labrinth (by versions.sort_by(|a, b| b.inner.date_published.cmp(&a.inner.date_published));)
-                        // so we can just take the first one for which the loader matches
-                        let mut new_profiles = state.profiles.write().await;
-                        if let Some(profile) =
-                            new_profiles.0.get_mut(&profile_path)
-                        {
-                            let loader = profile.metadata.loader;
-                            let recent_version = versions.iter().find(|x| {
-                                x.loaders
-                                    .contains(&loader.as_api_str().to_string())
-                            });
-                            if let Some(recent_version) = recent_version {
-                                profile.modrinth_update_version =
-                                    Some(recent_version.id.clone());
-                            } else {
-                                profile.modrinth_update_version = None;
-                            }
-                        }
-                        drop(new_profiles);
-
-                        Ok::<(), crate::Error>(())
-                    }
-                },
-            ))
-            .await?;
-
-            {
-                let profiles = state.profiles.read().await;
-                profiles.sync().await?;
-            }
-
-            Ok::<(), crate::Error>(())
-        }
-        .await;
-
-        match res {
-            Ok(()) => {}
-            Err(err) => {
-                tracing::warn!("Unable to update modrinth versions: {err}")
             }
         };
     }
@@ -936,7 +840,7 @@ impl Profiles {
         stream::iter(self.0.iter())
             .map(Ok::<_, crate::Error>)
             .try_for_each_concurrent(None, |(_, profile)| async move {
-                let json = serde_json::to_vec(&profile)?;
+                let json = serde_json::to_vec_pretty(&profile)?;
 
                 let json_path = profile
                     .get_profile_full_path()

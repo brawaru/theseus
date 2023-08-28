@@ -29,8 +29,8 @@ pub use self::profiles::*;
 mod settings;
 pub use self::settings::*;
 
-mod projects;
-pub use self::projects::*;
+mod cache;
+pub use self::cache::*;
 
 mod users;
 
@@ -241,19 +241,17 @@ impl State {
         tokio::task::spawn(Metadata::update());
         tokio::task::spawn(Tags::update());
         tokio::task::spawn(Profiles::update_projects());
-        tokio::task::spawn(Profiles::update_modrinth_versions());
         tokio::task::spawn(CredentialsStore::update_creds());
         tokio::task::spawn(async {
             if let Ok(state) = crate::State::get().await {
                 if !*state.offline.read().await {
-                    let res1 = Profiles::update_modrinth_versions();
                     let res2 = Tags::update();
                     let res3 = Metadata::update();
                     let res4 = Profiles::update_projects();
                     let res5 = Settings::update_java();
                     let res6 = CredentialsStore::update_creds();
 
-                    let _ = join!(res1, res2, res3, res4, res5, res6);
+                    let _ = join!(res2, res3, res4, res5, res6);
                 }
             }
         });
@@ -355,7 +353,7 @@ pub async fn init_watcher() -> crate::Result<Debouncer<RecommendedWatcher>> {
     )?;
     tokio::task::spawn(async move {
         let span = tracing::span!(tracing::Level::INFO, "init_watcher");
-        tracing::info!(parent: &span, "Initting watcher");
+        tracing::info!(parent: &span, "Initializing watcher");
         while let Some(res) = rx.next().await {
             let _span = span.enter();
             match res {

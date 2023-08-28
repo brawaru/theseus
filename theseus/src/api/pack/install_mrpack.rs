@@ -6,7 +6,7 @@ use crate::pack::install_from::{
     set_profile_information, EnvType, PackFile, PackFileHash,
 };
 use crate::prelude::ProfilePathId;
-use crate::state::{ProfileInstallStage, Profiles, SideType};
+use crate::state::{ProfileInstallStage, SideType};
 use crate::util::fetch::{fetch_mirrors, write};
 use crate::util::io;
 use crate::{profile, State};
@@ -53,9 +53,6 @@ pub async fn install_zipped_mrpack(
 
     // Install pack files, and if it fails, fail safely by removing the profile
     let result = install_zipped_mrpack_files(create_pack).await;
-
-    // Check existing managed packs for potential updates
-    tokio::task::spawn(Profiles::update_modrinth_versions());
 
     match result {
         Ok(profile) => Ok(profile),
