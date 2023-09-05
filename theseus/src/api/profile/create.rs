@@ -16,7 +16,6 @@ use daedalus::modded::LoaderVersion;
 use std::path::PathBuf;
 
 use tracing::{info, trace};
-use uuid::Uuid;
 
 // Creates a profile of a given name and adds it to the in-memory state
 // Returns relative filepath as ProfilePathId which can be used to access it in the State
@@ -38,7 +37,6 @@ pub async fn profile_create(
 
     trace!("Creating new profile. {}", name);
     let state = State::get().await?;
-    let uuid = Uuid::new_v4();
 
     let mut path = state.directories.profiles_dir().await.join(&name);
 
@@ -80,7 +78,7 @@ pub async fn profile_create(
         None
     };
 
-    let mut profile = Profile::new(uuid, name, game_version).await?;
+    let mut profile = Profile::new(name, game_version).await?;
     let result = async {
         if let Some(ref icon) = icon {
             let bytes =
@@ -104,7 +102,6 @@ pub async fn profile_create(
         profile.metadata.linked_data = linked_data;
 
         emit_profile(
-            uuid,
             &profile.profile_id(),
             &profile.metadata.name,
             ProfilePayloadType::Created,

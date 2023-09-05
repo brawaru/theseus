@@ -45,13 +45,8 @@ pub async fn remove(path: &ProfilePathId) -> crate::Result<()> {
     let mut profiles = state.profiles.write().await;
 
     if let Some(profile) = profiles.remove(path).await? {
-        emit_profile(
-            profile.uuid,
-            path,
-            &profile.metadata.name,
-            ProfilePayloadType::Removed,
-        )
-        .await?;
+        emit_profile(path, &profile.metadata.name, ProfilePayloadType::Removed)
+            .await?;
     }
 
     Ok(())
@@ -66,26 +61,6 @@ pub async fn get(
     let state = State::get().await?;
     let profiles = state.profiles.read().await;
     let mut profile = profiles.0.get(path).cloned();
-
-    if clear_projects.unwrap_or(false) {
-        if let Some(profile) = &mut profile {
-            profile.cached_projects = HashMap::new();
-        }
-    }
-
-    Ok(profile)
-}
-
-/// Get a profile by uuid
-#[tracing::instrument]
-pub async fn get_by_uuid(
-    uuid: uuid::Uuid,
-    clear_projects: Option<bool>,
-) -> crate::Result<Option<Profile>> {
-    let state = State::get().await?;
-
-    let profiles = state.profiles.read().await;
-    let mut profile = profiles.0.values().find(|x| x.uuid == uuid).cloned();
 
     if clear_projects.unwrap_or(false) {
         if let Some(profile) = &mut profile {
@@ -125,7 +100,6 @@ where
             action(profile).await?;
 
             emit_profile(
-                profile.uuid,
                 path,
                 &profile.metadata.name,
                 ProfilePayloadType::Edited,
@@ -163,7 +137,6 @@ pub async fn edit_icon(
                     .await?;
 
                 emit_profile(
-                    profile.uuid,
                     path,
                     &profile.metadata.name,
                     ProfilePayloadType::Edited,
@@ -331,7 +304,6 @@ pub async fn update_all_projects(
         .await?;
 
         emit_profile(
-            profile.uuid,
             profile_path,
             &profile.metadata.name,
             ProfilePayloadType::Edited,
@@ -392,7 +364,6 @@ pub async fn update_project(
 
                 if !skip_send_event.unwrap_or(false) {
                     emit_profile(
-                        profile.uuid,
                         profile_path,
                         &profile.metadata.name,
                         ProfilePayloadType::Edited,
@@ -428,7 +399,6 @@ pub async fn add_project_from_version(
         let (project_path, _) = profile.add_project_version(version_id).await?;
 
         emit_profile(
-            profile.uuid,
             profile_path,
             &profile.metadata.name,
             ProfilePayloadType::Edited,
@@ -468,7 +438,6 @@ pub async fn add_project_from_path(
             .await?;
 
         emit_profile(
-            profile.uuid,
             profile_path,
             &profile.metadata.name,
             ProfilePayloadType::Edited,
@@ -497,7 +466,6 @@ pub async fn toggle_disable_project(
         let res = profile.toggle_disable_project(project).await?;
 
         emit_profile(
-            profile.uuid,
             profile_path,
             &profile.metadata.name,
             ProfilePayloadType::Edited,
@@ -525,7 +493,6 @@ pub async fn remove_project(
         profile.remove_project(project, None).await?;
 
         emit_profile(
-            profile.uuid,
             profile_path,
             &profile.metadata.name,
             ProfilePayloadType::Edited,

@@ -297,7 +297,6 @@ pub async fn emit_process(
 // emit_profile(path, event)
 #[allow(unused_variables)]
 pub async fn emit_profile(
-    uuid: Uuid,
     profile_path_id: &ProfilePathId,
     name: &str,
     event: ProfilePayloadType,

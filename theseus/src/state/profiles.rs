@@ -24,7 +24,6 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
 };
-use uuid::Uuid;
 
 const PROFILE_JSON_PATH: &str = "profile.json";
 
@@ -138,7 +137,6 @@ impl ProjectPathId {
 // Represent a Minecraft instance.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Profile {
-    pub uuid: Uuid, // todo: will be used in restructure to refer to profiles
     #[serde(default)]
     pub install_stage: ProfileInstallStage,
     #[serde(default)]
@@ -243,11 +241,7 @@ pub struct JavaSettings {
 
 impl Profile {
     #[tracing::instrument]
-    pub async fn new(
-        uuid: Uuid,
-        name: String,
-        version: String,
-    ) -> crate::Result<Self> {
+    pub async fn new(name: String, version: String) -> crate::Result<Self> {
         if name.trim().is_empty() {
             return Err(crate::ErrorKind::InputError(String::from(
                 "Empty name for instance!",
@@ -256,7 +250,6 @@ impl Profile {
         }
 
         Ok(Self {
-            uuid,
             install_stage: ProfileInstallStage::NotInstalled,
             path: PathBuf::new().join(&name),
             metadata: ProfileMetadata {
@@ -369,7 +362,6 @@ impl Profile {
                         new_profiles.sync().await?;
 
                         emit_profile(
-                            profile.uuid,
                             &profile_path_id,
                             &profile.metadata.name,
                             ProfilePayloadType::Synced,
@@ -796,7 +788,6 @@ impl Profiles {
         no_watch: bool,
     ) -> crate::Result<&Self> {
         emit_profile(
-            profile.uuid,
             &profile.profile_id(),
             &profile.metadata.name,
             ProfilePayloadType::Added,
@@ -885,7 +876,6 @@ impl Profiles {
                     if !profile.get_profile_full_path().await?.exists() {
                         // if path exists in the state but no longer in the filesystem, remove it from the state list
                         emit_profile(
-                            profile.uuid,
                             &profile_path_id,
                             &profile.metadata.name,
                             ProfilePayloadType::Removed,

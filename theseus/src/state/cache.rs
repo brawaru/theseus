@@ -21,6 +21,13 @@ use tokio::io::AsyncReadExt;
 
 use super::ProjectPathId;
 
+pub struct HomePageCache {}
+
+pub struct Cache {
+    pub projects: HashMap<String, ModrinthProject>,
+    pub versions: HashMap<String, ModrinthVersion>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum ProjectType {

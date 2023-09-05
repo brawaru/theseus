@@ -76,7 +76,6 @@ pub async fn repair_managed_modrinth(
     .await?;
 
     emit_profile(
-        profile.uuid,
         profile_path,
         &profile.metadata.name,
         ProfilePayloadType::Edited,
