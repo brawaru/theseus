@@ -1,0 +1,266 @@
+import { APIError, NoSessionError, wrapError } from "./errors.ts";
+import type { User } from "~/plugins/api/types.ts";
+import { useSessionCookie } from "./session-cookie.ts";
+import { didSessionExpire } from "./utils.ts";
+import type { OnRefreshErrorValue } from "./types.ts";
+
+export function setupPlugin() {
+  const $oldToken = useCookie("auth-token", {
+    maxAge: 60 * 60 * 24 * 365 * 10,
+    sameSite: "lax",
+    secure: true,
+    httpOnly: false,
+    path: "/",
+    default() {
+      return null as string | null;
+    },
+  });
+
+  const $session = useSessionCookie();
+
+  const $user = ref<User | null>(null);
+
+  const $api = useNuxtApp().$modrinthAPI;
+
+  function getSessionOrThrow(message: string) {
+    const session = $session.value;
+    if (session == null) throw new NoSessionError(message);
+    return session;
+  }
+
+  /**
+   * Refreshes the user data for the current session.
+   *
+   * @throws {NoSessionError} If there is no current session.
+   * @throws {APIError} If an API error occurs during data refresh.
+   */
+  async function refreshUser() {
+    const session = getSessionOrThrow("Cannot refresh user data without an active session");
+
+    try {
+      $user.value = await $api.getCurrentUser({
+        headers: { authorization: session.session },
+      });
+    } catch (err) {
+      throw wrapError(err, "Unable to refresh the user data");
+    }
+  }
+
+  /**
+   * Refreshes the session for the provided token, and saves the new session on success, replacing
+   * any previous session, and deleting any old unmigrated token from before authorization rewrite.
+   *
+   * This does not refresh the user data.
+   *
+   * @param token Token that will be used to refresh the session.
+   * @throws {APIError} If an error has been returned from the server.
+   */
+  async function login(token: string) {
+    let session;
+    try {
+      session = await $api.refreshSession({
+        headers: { authorization: token },
+      });
+    } catch (err) {
+      throw wrapError(err, "Unable to refresh the session");
+    }
+
+    $session.value = session;
+    $oldToken.value = null;
+  }
+
+  /**
+   * Sends a request to terminate session, and clears any session and data on success or if
+   * `throwOnTerminationFail` is set to `false`.
+   *
+   * @param throwOnTerminationFail Whether to throw if the session cannot be terminated.
+   * @throws {APIError} If `throwOnTerminationFail` is set to `true`, and session cannot be
+   *   terminated.
+   */
+  async function logout(throwOnTerminationFail = false) {
+    if ($session.value != null) {
+      try {
+        await $api.deleteSession($session.value.id);
+      } catch (cause) {
+        if (throwOnTerminationFail) {
+          throw wrapError(cause, "Unable to terminate current session");
+        }
+      }
+
+      $session.value = null;
+    }
+
+    $user.value = null;
+  }
+
+  function handleLogoutOnError(error: unknown, handling: OnRefreshErrorValue) {
+    if (
+      handling === "logout" ||
+      (handling === "logoutInvalid" && error instanceof APIError && error.isUnauthorized)
+    ) {
+      return logout(false);
+    }
+
+    throw error;
+  }
+
+  /**
+   * If `canMigrate` is `true`, then refreshes the session for the old token, and saves it, clearing
+   * old token in the process.
+   *
+   * @param options Options, such as error handling.
+   * @throws {Error} If no previous token is stored (can be checked using `canMigrate` property).
+   * @throws {APIError} Based on `options.onError` option, see {@link OnRefreshErrorValue} for more
+   *   details.
+   */
+  async function migrate(options?: {
+    /**
+     * Defines whether the log out should happen if an error occurs when attempting to refresh the
+     * session for the old token. See {@link OnRefreshErrorValue} for more information about the
+     * values. Default is `"logoutInvalid"`.
+     */
+    onError?: OnRefreshErrorValue;
+  }) {
+    const onError = options?.onError ?? "logoutInvalid";
+
+    if ($oldToken.value == null) {
+      throw new Error("No old token saved to migrate");
+    }
+
+    try {
+      await login($oldToken.value);
+
+      $oldToken.value = null;
+    } catch (err) {
+      return handleLogoutOnError(err, onError);
+    }
+  }
+
+  /**
+   * Refreshes the current session and accordingly handles any errors in the process.
+   *
+   * @param options Options, such as error handling.
+   * @throws {NoSessionError} If there is no current session.
+   * @throws {APIError} Based on `options.onError` option, see {@link OnRefreshErrorValue} for more
+   *   details.
+   */
+  async function refreshSession(options?: {
+    /**
+     * Defines whether the log out should happen if an error occurs when attempting to refresh the
+     * session. See {@link OnRefreshErrorValue} for information about the values. Default is
+     * `"logoutInvalid"`.
+     */
+    onError?: OnRefreshErrorValue;
+  }) {
+    const onError = options?.onError ?? "logoutInvalid";
+
+    const { session } = getSessionOrThrow(
+      "Unable to refresh the session without an active session",
+    );
+
+    try {
+      await login(session);
+    } catch (err) {
+      return handleLogoutOnError(err, onError);
+    }
+  }
+
+  /**
+   * Ensures that if there is a saved session, it is recently refreshed, and the user data related
+   * to that session is refreshed as well. If there is an old token, it will be migrated during the
+   * call. If there's an authorization error during the user data fetching, an attempt to forcefully
+   * refresh session will be made, and then handled accordingly.
+   *
+   * @param options Options, such as error handling.
+   * @throws {UnauthorizedError} If session cannot be refreshed because it's invalid and
+   *   `options.onError` is set to "throw".
+   * @throws {APIError} If session cannot be refreshed because it's invalid and options.onError is
+   *   set to "throw".
+   * @throws {Error} If unable to retriev
+   */
+  async function initialize(options?: {
+    /**
+     * Defines whether the log out should happen if an error occurs during initialization. See
+     * {@link OnRefreshErrorValue} for information about the values. Default is `"logoutInvalid"`.
+     */
+    onError: OnRefreshErrorValue;
+  }) {
+    const onError = options?.onError ?? "logoutInvalid";
+
+    if ($session.value == null && $oldToken.value == null) return;
+
+    if ($oldToken.value != null) await migrate({ onError });
+
+    // we might have logged out upon migration because our token expired
+    if ($session.value == null) return;
+
+    let forcefullyRefresh = false;
+
+    while (true) {
+      if (forcefullyRefresh || didSessionExpire($session.value)) {
+        await refreshSession({ onError });
+      }
+
+      if ($session.value == null) return;
+
+      if ($user.value == null) {
+        try {
+          await refreshUser();
+          break;
+        } catch (err) {
+          if (!forcefullyRefresh && err instanceof APIError && err.isUnauthorized) {
+            forcefullyRefresh = true;
+            continue;
+          }
+
+          // if we already refreshed, or the error is not related to auth, there
+          // is no point to refresh session, so we should just handle log out
+          // according to the options
+          return handleLogoutOnError(err, onError);
+        }
+      }
+    }
+  }
+
+  const modrinthAuth = reactive({
+    /**
+     * User data for the current token (if any is fetched).
+     *
+     * @readonly
+     */
+    user: readonly($user),
+
+    /**
+     * Active session data.
+     *
+     * @readonly
+     */
+    session: readonly($session),
+
+    /** Whether the previous token is stored and can be migrated. */
+    get canMigrate() {
+      return $oldToken.value != null;
+    },
+
+    migrate,
+
+    login,
+
+    logout,
+
+    refreshUser,
+
+    refreshSession,
+
+    initialize,
+
+    then(
+      onFulfilled: (value: Omit<typeof modrinthAuth, "then">) => void,
+      onRejected: (error: unknown) => void,
+    ) {
+      initialize().then(() => onFulfilled(this as any), onRejected);
+    },
+  });
+
+  return { provide: { modrinthAuth } };
+}
