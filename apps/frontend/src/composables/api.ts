@@ -9,5 +9,5 @@ export function useModrinthFetch<T>(
   options: Omit<UseFetchOptions<T>, "$fetch"> = {},
 ) {
   const { $fetch } = useModrinthAPI();
-  return useFetch(url, { ...options, $fetch });
+  return useFetch(url, { ...options, $fetch: $fetch.base });
 }

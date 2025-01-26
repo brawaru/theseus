@@ -1,11 +1,10 @@
-import type { $Fetch } from "nitropack";
-import type { RouterMethod } from "h3";
 import type { NitroFetchOptions } from "nitropack";
 import type { paths } from "./schema.d.ts";
 import type { Session } from "./types.ts";
+import type { TypedFetch } from "./typed-fetch.ts";
 
-type FetchOverrides<M extends RouterMethod> = Omit<
-  NitroFetchOptions<string, M>,
+type FetchOverrides = Omit<
+  NitroFetchOptions<string, any>,
   "method" | "baseURL" // you can, of course, "as any" this bad boy, but why?
 >;
 
@@ -29,28 +28,34 @@ function joinPathParts(...parts: string[]) {
   return result;
 }
 
-export function createAPI(fetchAPI: $Fetch<unknown, string>) {
+export function createAPI(fetchAPI: TypedFetch<paths>) {
+  fetchAPI("/project/{id|slug}", {
+    path: { "id|slug": "sodium" },
+    method: "patch",
+    body: {},
+  });
+
   return {
-    getCurrentUser(options?: FetchOverrides<"get">) {
-      type Response = paths["/user"]["get"]["responses"][200]["content"]["application/json"];
-      return fetchAPI<Response>("/user", options);
+    getCurrentUser(options?: FetchOverrides) {
+      return fetchAPI("/user", options);
     },
-    refreshSession(options?: FetchOverrides<"post">) {
-      return fetchAPI<Session>("/session/refresh", {
+    refreshSession(options?: FetchOverrides) {
+      return fetchAPI.base<Session>("/session/refresh", {
         method: "post",
         ...options,
       });
     },
-    deleteSession(id: string, options?: FetchOverrides<"delete">) {
-      return fetchAPI<Session>(joinPathParts("/session", id), {
+    deleteSession(id: string, options?: FetchOverrides) {
+      return fetchAPI.base(joinPathParts("/session", id), {
         method: "delete",
         ...options,
       });
     },
-    getUser(idOrUsername: string, options?: FetchOverrides<"get">) {
-      type Response =
-        paths["/user/{id|username}"]["get"]["responses"]["200"]["content"]["application/json"];
-      return fetchAPI<Response>(joinPathParts("/user", idOrUsername), options);
+    getUser(idOrUsername: string, options?: FetchOverrides) {
+      return fetchAPI("/user/{id|username}", {
+        path: { "id|username": idOrUsername },
+        ...options,
+      });
     },
   };
 }

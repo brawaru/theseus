@@ -24,6 +24,7 @@
     "eslint": "^8.57.0",
     "glob": "^10.2.7",
     "nuxt": "^3.14.1592",
+    "openapi-typescript-helpers": "^0.0.15",
     "postcss": "^8.4.39",
     "prettier-plugin-tailwindcss": "^0.6.5",
     "sass": "^1.58.0",
