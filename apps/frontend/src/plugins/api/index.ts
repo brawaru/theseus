@@ -13,7 +13,7 @@ export default defineNuxtPlugin({
       ...createAPI(fetchAPI),
 
       /** A fetch configured specifically for API. */
-      $fetch: fetchAPI,
+      $apiFetch: fetchAPI,
 
       /**
        * Global authentication provides a value for the `Authorization` headers for all requests
