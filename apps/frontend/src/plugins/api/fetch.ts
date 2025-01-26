@@ -1,6 +1,6 @@
 import { type APIFetchOptions, type ResolvedAPIFetchOptions } from "./fetch-types.ts";
 import type { paths } from "./schema.d.ts";
-import { createTypedFetch } from "./typed-fetch.ts";
+import { createTypedFetch } from "./typed-fetch/index.ts";
 
 export function setupAPIFetch(options?: APIFetchOptions) {
   const config = useRuntimeConfig();

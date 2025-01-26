@@ -1,7 +1,7 @@
 import type { NitroFetchOptions } from "nitropack";
 import type { paths } from "./schema.d.ts";
+import type { TypedFetch } from "./typed-fetch/index.ts";
 import type { NewSession, Session } from "./types.ts";
-import type { TypedFetch } from "./typed-fetch.ts";
 
 type FetchOverrides = Omit<
   NitroFetchOptions<string, any>,
