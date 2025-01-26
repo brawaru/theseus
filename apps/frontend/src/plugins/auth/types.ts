@@ -1,4 +1,4 @@
-import type { Session } from "~/plugins/api/types.ts";
+import type { NewSession } from "~/plugins/api/types.ts";
 
 /**
  * Defines what happens when an error occurs during session refresh or migration.
@@ -15,7 +15,7 @@ import type { Session } from "~/plugins/api/types.ts";
 export type OnRefreshErrorValue = "logout" | "logoutInvalid" | "throw";
 
 export type LimitedSession = Pick<
-  Session,
+  NewSession,
   "session" | "id" | "expires" | "refresh_expires" | "created"
 >;
 

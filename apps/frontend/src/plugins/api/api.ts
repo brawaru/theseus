@@ -1,6 +1,6 @@
 import type { NitroFetchOptions } from "nitropack";
 import type { paths } from "./schema.d.ts";
-import type { Session } from "./types.ts";
+import type { NewSession, Session } from "./types.ts";
 import type { TypedFetch } from "./typed-fetch.ts";
 
 type FetchOverrides = Omit<
@@ -39,8 +39,11 @@ export function createAPI(fetchAPI: TypedFetch<paths>) {
     getCurrentUser(options?: FetchOverrides) {
       return fetchAPI("/user", options);
     },
+    getAllSessions(options?: FetchOverrides) {
+      return fetchAPI.base<Session[]>("/session/list", options);
+    },
     refreshSession(options?: FetchOverrides) {
-      return fetchAPI.base<Session>("/session/refresh", {
+      return fetchAPI.base<NewSession>("/session/refresh", {
         method: "post",
         ...options,
       });

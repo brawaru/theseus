@@ -47,22 +47,76 @@ export function setupPlugin() {
   }
 
   /**
-   * Refreshes the session for the provided token, and saves the new session on success, replacing
-   * any previous session, and deleting any old unmigrated token from before authorization rewrite.
+   * Retrieves the current session from the list of the active sessions.
+   *
+   * This is a workaround due to the lack of API method to retrieve the current session.
+   *
+   * @param token Token used to retrieve the list of all sessions.
+   * @returns Current session from the list of sessions with `session` property assigned to the
+   *   token, which was used to retrieve the list.
+   * @throws {APIError} If unable to retrieve the list of sessions.
+   * @throws {Error} If none of sessions in the list is "current".
+   */
+  async function getCurrentSession(token: string) {
+    let sessions;
+    try {
+      sessions = await $api.getAllSessions({
+        headers: { authorization: token },
+      });
+    } catch (err) {
+      throw wrapError(err, "Unable to get list of active sessions");
+    }
+
+    const currentSession = sessions.find(({ current }) => current);
+
+    if (currentSession == null) {
+      throw new Error("Unable to find current session in the list of sessions");
+    }
+
+    return Object.assign({ ...currentSession }, { session: token });
+  }
+
+  /**
+   * Validates the session for the provided token, or attempts to automatically refresh it on
+   * failure (according to options). Saves the new session on success, replacing any previous
+   * session, and deleting any old unmigrated token from before authorization rewrite.
    *
    * This does not refresh the user data.
    *
    * @param token Token that will be used to refresh the session.
-   * @throws {APIError} If an error has been returned from the server.
+   * @throws {APIError} If the session cannot be validated or refreshed due to error from API.
+   * @throws {Error} If there was an error during the validation of the session.
    */
-  async function login(token: string) {
+  async function login(
+    token: string,
+    options?: {
+      /**
+       * Whether the attempt must be made to refresh the session if its initial validation was not
+       * successful.
+       *
+       * @default true
+       */
+      autoRefresh?: boolean;
+    },
+  ) {
+    const shouldAutoRefresh = options?.autoRefresh ?? true;
+
     let session;
+
     try {
-      session = await $api.refreshSession({
-        headers: { authorization: token },
-      });
+      session = await getCurrentSession(token);
     } catch (err) {
-      throw wrapError(err, "Unable to refresh the session");
+      if (shouldAutoRefresh && err instanceof APIError && err.isUnauthorized) {
+        try {
+          session = await $api.refreshSession({
+            headers: { Authorization: token },
+          });
+        } catch (refreshErr) {
+          throw wrapError(refreshErr, "Unable to neither validate nor refresh the session");
+        }
+      }
+
+      throw wrapError(err, "Unable to validate the session");
     }
 
     $session.value = session;

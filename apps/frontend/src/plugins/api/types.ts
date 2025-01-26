@@ -4,7 +4,7 @@ export type User = components["schemas"]["User"];
 
 export interface Session {
   id: string;
-  session: string;
+  session?: string;
   user_id: string;
   created: string;
   last_login: string;
@@ -18,3 +18,5 @@ export interface Session {
   ip: string;
   current: boolean;
 }
+
+export type NewSession = Omit<Session, "session"> & Required<Pick<Session, "session">>;
