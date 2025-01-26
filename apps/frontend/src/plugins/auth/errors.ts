@@ -8,12 +8,8 @@ export class APIError extends Error {
     this.cause = options?.cause;
   }
 
-  get #cause() {
-    return this.cause as FetchError;
-  }
-
   #isOfCode(statusCode: number) {
-    const cause = this.#cause;
+    const cause = this.cause as FetchError;
     return cause.statusCode === statusCode;
   }
 
