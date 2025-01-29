@@ -427,6 +427,8 @@ export default defineNuxtConfig({
   },
   compatibilityDate: "2024-07-03",
   telemetry: false,
+  pinia: { storesDirs: [] },
+  imports: { dirs: ['stores', 'stores/**/index.{ts,js,mts,mjs}'] }
 });
 
 function getApiUrl() {

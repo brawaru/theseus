@@ -1,10 +1,10 @@
-import { APIError, NoSessionError, wrapError } from "./errors.ts";
 import type { User } from "~/plugins/api/types.ts";
+import { APIError, NoSessionError, wrapError } from "./errors.ts";
 import { useSessionCookie } from "./session-cookie.ts";
-import { didSessionExpire } from "./utils.ts";
 import type { OnRefreshErrorValue } from "./types.ts";
+import { didSessionExpire } from "./utils.ts";
 
-export function setupPlugin() {
+export const useAuthStore = defineStore("auth", () => {
   const $oldToken = useCookie("auth-token", {
     maxAge: 60 * 60 * 24 * 365 * 10,
     sameSite: "lax",
@@ -16,9 +16,11 @@ export function setupPlugin() {
     },
   });
 
+  const $canMigrate = computed(() => $oldToken.value != null);
+
   const $session = useSessionCookie();
 
-  const $user = ref<User | null>(null);
+  const $user = useState<User | null>("auth/user", () => null);
 
   const $api = useNuxtApp().$modrinthAPI;
 
@@ -232,7 +234,7 @@ export function setupPlugin() {
    *   set to "throw".
    * @throws {Error} If unable to retriev
    */
-  async function initialize(options?: {
+  async function hydrate(options?: {
     /**
      * Defines whether the log out should happen if an error occurs during initialization. See
      * {@link OnRefreshErrorValue} for information about the values. Default is `"logoutInvalid"`.
@@ -276,45 +278,26 @@ export function setupPlugin() {
     }
   }
 
-  const modrinthAuth = reactive({
+  return {
     /**
-     * User data for the current token (if any is fetched).
+     * Data of the authorized user.
      *
-     * @readonly
+     * `null` if not signed in or fetched.
      */
-    user: readonly($user),
-
+    user: $user,
     /**
-     * Active session data.
+     * Current authorization session.
      *
-     * @readonly
+     * `null` if not signed in.
      */
-    session: readonly($session),
-
-    /** Whether the previous token is stored and can be migrated. */
-    get canMigrate() {
-      return $oldToken.value != null;
-    },
-
+    session: $session,
+    /** Whether an old cookie tokie is present that can be migrated. */
+    canMigrate: $canMigrate,
     migrate,
-
     login,
-
     logout,
-
     refreshUser,
-
     refreshSession,
-
-    initialize,
-
-    then(
-      onFulfilled: (value: Omit<typeof modrinthAuth, "then">) => void,
-      onRejected: (error: unknown) => void,
-    ) {
-      initialize().then(() => onFulfilled(this as any), onRejected);
-    },
-  });
-
-  return { provide: { modrinthAuth } };
-}
+    hydrate,
+  };
+});

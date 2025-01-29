@@ -3,11 +3,12 @@ export default defineNuxtPlugin({
   name: "modrinth-api-auth",
   dependsOn: ["modrinth-api", "modrinth-auth"],
   setup() {
-    const { $modrinthAPI, $modrinthAuth } = useNuxtApp();
+    const { $modrinthAPI, $pinia } = useNuxtApp();
+    const session = toRef(useAuthStore($pinia), "session");
 
     $modrinthAPI.globalAuthProvider = {
       getToken() {
-        return $modrinthAuth.session?.session;
+        return session.value?.session;
       },
     };
   },
