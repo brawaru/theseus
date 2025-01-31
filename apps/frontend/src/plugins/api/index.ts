@@ -1,19 +1,16 @@
-import { createAPI } from "./api.ts";
 import type { AuthProvider } from "./fetch-types.ts";
-import { setupAPIFetch } from "./fetch.ts";
+import { useAPIVersions } from "./versions/index.ts";
 
 export default defineNuxtPlugin({
   name: "modrinth-api",
   async setup() {
-    const fetchAPI = setupAPIFetch();
+    let authProvider: AuthProvider | undefined;
 
-    let authProvider: AuthProvider | null | undefined;
+    const versions = useAPIVersions(() => authProvider);
 
     const api = {
-      ...createAPI(fetchAPI),
-
-      /** A fetch configured specifically for API. */
-      $apiFetch: fetchAPI,
+      /** Different versions of the API. */
+      versions,
 
       /**
        * Global authentication provides a value for the `Authorization` headers for all requests

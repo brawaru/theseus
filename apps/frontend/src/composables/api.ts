@@ -1,13 +1,7 @@
-// import type { UseFetchOptions } from "#app";
+import type { APIVersionsMap } from "~/plugins/api/versions";
 
-export function useModrinthAPI() {
-  return useNuxtApp().$modrinthAPI;
+export function useModrinthAPI<APIVersion extends keyof APIVersionsMap>(
+  version: APIVersion,
+): APIVersionsMap[APIVersion] {
+  return useNuxtApp().$modrinthAPI.versions[version];
 }
-
-// export function useModrinthFetch<T>(
-//   url: string | (() => string),
-//   options: Omit<UseFetchOptions<T>, "$fetch"> = {},
-// ) {
-//   const { $fetch } = useModrinthAPI();
-//   return useFetch(url, { ...options, $fetch: $fetch.base });
-// }

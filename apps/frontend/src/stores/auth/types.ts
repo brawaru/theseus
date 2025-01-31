@@ -1,4 +1,4 @@
-import type { NewSession } from "~/plugins/api/types.ts";
+import type { NewSession } from "~/plugins/api/versions/v2/types.ts";
 
 /**
  * Defines what happens when an error occurs during session refresh or migration.

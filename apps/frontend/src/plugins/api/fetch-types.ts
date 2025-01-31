@@ -9,7 +9,7 @@ export interface AuthProvider {
 }
 
 export interface FetchOptionExtension {
-  auth?: AuthProvider | (() => AuthProvider) | null;
+  auth?: AuthProvider | (() => AuthProvider | null | undefined) | null;
 }
 
 export type ResolvedAPIFetchOptions = ResolvedFetchOptions & FetchOptionExtension;

@@ -1,4 +1,4 @@
-import type { User } from "~/plugins/api/types.ts";
+import type { User } from "~/plugins/api/versions/v2/types.ts";
 import { APIError, NoSessionError, wrapError } from "./errors.ts";
 import { useSessionCookie } from "./session-cookie.ts";
 import type { OnRefreshErrorValue } from "./types.ts";
@@ -22,7 +22,7 @@ export const useAuthStore = defineStore("auth", () => {
 
   const $user = useState<User | null>("auth/user", () => null);
 
-  const $api = useNuxtApp().$modrinthAPI;
+  const $api = useModrinthAPI("v2");
 
   function getSessionOrThrow(message: string) {
     const session = $session.value;
@@ -40,7 +40,7 @@ export const useAuthStore = defineStore("auth", () => {
     const session = getSessionOrThrow("Cannot refresh user data without an active session");
 
     try {
-      $user.value = await $api.getCurrentUser({
+      $user.value = await $api.methods.getCurrentUser({
         headers: { authorization: session.session },
       });
     } catch (err) {
@@ -62,7 +62,7 @@ export const useAuthStore = defineStore("auth", () => {
   async function getCurrentSession(token: string) {
     let sessions;
     try {
-      sessions = await $api.getAllSessions({
+      sessions = await $api.methods.getAllSessions({
         headers: { authorization: token },
       });
     } catch (err) {
@@ -110,7 +110,7 @@ export const useAuthStore = defineStore("auth", () => {
     } catch (err) {
       if (shouldAutoRefresh && err instanceof APIError && err.isUnauthorized) {
         try {
-          session = await $api.refreshSession({
+          session = await $api.methods.refreshSession({
             headers: { Authorization: token },
           });
         } catch (refreshErr) {
@@ -136,7 +136,7 @@ export const useAuthStore = defineStore("auth", () => {
   async function logout(throwOnTerminationFail = false) {
     if ($session.value != null) {
       try {
-        await $api.deleteSession($session.value.id);
+        await $api.methods.deleteSession($session.value.id);
       } catch (cause) {
         if (throwOnTerminationFail) {
           throw wrapError(cause, "Unable to terminate current session");
