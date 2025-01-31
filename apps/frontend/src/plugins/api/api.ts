@@ -29,12 +29,6 @@ function joinPathParts(...parts: string[]) {
 }
 
 export function createAPI(fetchAPI: TypedFetch<paths>) {
-  fetchAPI("/project/{id|slug}", {
-    path: { "id|slug": "sodium" },
-    method: "patch",
-    body: {},
-  });
-
   return {
     getCurrentUser(options?: FetchOverrides) {
       return fetchAPI("/user", options);
