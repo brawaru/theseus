@@ -16,9 +16,9 @@ export function useAPIVersions(auth: () => AuthProvider | undefined) {
   };
 
   return hydrateMap({
-    v2: createV2API.bind(null, apiConfig),
-    v3: createV3API.bind(null, apiConfig),
-    internal: createInternalAPI.bind(null, apiConfig),
+    v2: () => createV2API(apiConfig),
+    v3: () => createV3API(apiConfig),
+    internal: () => createInternalAPI(apiConfig),
   });
 }
 
